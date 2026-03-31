@@ -5,12 +5,11 @@ import pandas as pd
 from datetime import datetime, timedelta
 import urllib3
 import os
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
-translator = Translator()
 
 def get_stock_id_list():
     url = "https://api.finmindtrade.com/api/v4/data"
@@ -139,10 +138,9 @@ def get_stock_info(stock_id):
         description_zh = "暫無簡介資料"
         if description_en:
             try:
-                translated = translator.translate(description_en, dest="zh-tw")
-                description_zh = translated.text
+                description_zh = GoogleTranslator(source="en", target="zh-TW").translate(description_en)
             except:
-                description_zh = description_en  # 翻譯失敗就顯示英文
+                description_zh = description_en
 
         return {
             "name": info.get("longName", ""),
