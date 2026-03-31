@@ -2,7 +2,7 @@ from flask import Flask, render_template, jsonify, request
 import yfinance as yf
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import urllib3
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -46,6 +46,43 @@ def get_institutional_investors():
     except Exception as e:
         return {"error": str(e)}
 
+def get_industry_institutional():
+    try:
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+        url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={yesterday}&selectType=ALLBUT0999&response=json"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=10, verify=False)
+        data = res.json()
+
+        if data.get("stat") != "OK":
+            return {"error": "資料尚未更新"}
+
+        df_fund = pd.DataFrame(data["data"], columns=data["fields"])
+        df_fund = df_fund[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+        df_fund["三大法人買賣超股數"] = df_fund["三大法人買賣超股數"].str.replace(",", "").astype(float)
+
+        url2 = "https://api.finmindtrade.com/api/v4/data"
+        params = {"dataset": "TaiwanStockInfo", "token": ""}
+        res2 = requests.get(url2, params=params)
+        data2 = res2.json()
+        df_info = pd.DataFrame(data2["data"])[["stock_id", "industry_category"]]
+
+        df_merged = pd.merge(df_fund, df_info, left_on="證券代號", right_on="stock_id", how="left")
+
+        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
+                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
+        df_merged = df_merged[~df_merged["industry_category"].isin(exclude)]
+        df_merged = df_merged.dropna(subset=["industry_category"])
+
+        result = {}
+        for industry, group in df_merged.groupby("industry_category"):
+            top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]]
+            result[industry] = top5.to_dict("records")
+
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
 def get_stock_info(stock_id):
     try:
         ticker = yf.Ticker(f"{stock_id}.TW")
@@ -77,6 +114,10 @@ def api_price(stock_id):
 @app.route("/api/institutional")
 def api_institutional():
     return jsonify(get_institutional_investors())
+
+@app.route("/api/industry")
+def api_industry():
+    return jsonify(get_industry_institutional())
 
 @app.route("/api/stock/<stock_id>")
 def api_stock(stock_id):
