@@ -78,4 +78,102 @@ def get_industry_institutional():
 
         result = {}
         for industry, group in df_merged.groupby("industry_category"):
-            top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大
+            top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]]
+            result[industry] = top5.to_dict("records")
+
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_weekly_institutional():
+    try:
+        today = datetime.now()
+        monday = today - timedelta(days=today.weekday())
+        dates = []
+        for i in range(5):
+            d = monday + timedelta(days=i)
+            if d <= today:
+                dates.append(d.strftime("%Y%m%d"))
+
+        df_info = get_stock_id_list()
+        stock_only = df_info["stock_id"].tolist()
+
+        all_df = []
+        for date in dates:
+            url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date}&selectType=ALLBUT0999&response=json"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            res = requests.get(url, headers=headers, timeout=10, verify=False)
+            data = res.json()
+            if data.get("stat") != "OK":
+                continue
+            df = pd.DataFrame(data["data"], columns=data["fields"])
+            df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+            df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
+            df = df[df["證券代號"].isin(stock_only)]
+            all_df.append(df)
+
+        if not all_df:
+            return {"error": "本週尚無資料"}
+
+        combined = pd.concat(all_df)
+        weekly = combined.groupby("證券名稱")["三大法人買賣超股數"].sum().reset_index()
+        weekly.columns = ["股票名稱", "週合計買賣超"]
+
+        top10_buy = weekly.nlargest(10, "週合計買賣超").to_dict("records")
+        top10_sell = weekly.nsmallest(10, "週合計買賣超").to_dict("records")
+
+        return {
+            "buy": top10_buy,
+            "sell": top10_sell,
+            "dates": dates
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_stock_info(stock_id):
+    try:
+        ticker = yf.Ticker(f"{stock_id}.TW")
+        info = ticker.info
+        fast = ticker.fast_info
+        return {
+            "name": info.get("longName", ""),
+            "industry": info.get("industry", ""),
+            "description": info.get("longBusinessSummary", "暫無資料"),
+            "price": fast.last_price,
+            "pe_ratio": info.get("trailingPE", "N/A"),
+            "pb_ratio": info.get("priceToBook", "N/A"),
+            "roe": info.get("returnOnEquity", "N/A"),
+            "roa": info.get("returnOnAssets", "N/A"),
+            "revenue_growth": info.get("revenueGrowth", "N/A"),
+            "market_cap": info.get("marketCap", "N/A"),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+@app.route("/api/price/<stock_id>")
+def api_price(stock_id):
+    return jsonify(get_stock_price(stock_id))
+
+@app.route("/api/institutional")
+def api_institutional():
+    return jsonify(get_institutional_investors())
+
+@app.route("/api/industry")
+def api_industry():
+    return jsonify(get_industry_institutional())
+
+@app.route("/api/weekly")
+def api_weekly():
+    return jsonify(get_weekly_institutional())
+
+@app.route("/api/stock/<stock_id>")
+def api_stock(stock_id):
+    return jsonify(get_stock_info(stock_id))
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
