@@ -43,6 +43,8 @@
         .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .filter-bar input { padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 14px; width: 200px; }
         .week-label { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+        .description-box { background: #0f172a; border-radius: 8px; padding: 16px; margin-top: 16px; font-size: 14px; line-height: 1.8; color: #94a3b8; }
+        .tag { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; background: #1e3a5f; color: #38bdf8; margin-right: 8px; margin-bottom: 8px; }
     </style>
 </head>
 <body>
@@ -113,9 +115,11 @@
                 <button onclick="searchStock()">查詢</button>
             </div>
             <div id="stockCard" style="display:none;">
-                <div class="grid">
+                <!-- 第一排：股價 + 財務指標 -->
+                <div class="grid" style="margin-bottom:20px;">
                     <div class="card">
                         <h2 id="stockName">股票名稱</h2>
+                        <div id="stockTags" style="margin-bottom:12px;"></div>
                         <div class="price-big" id="stockPrice">--</div>
                         <div class="price-sub" id="stockHighLow"></div>
                     </div>
@@ -123,6 +127,11 @@
                         <h2>財務指標</h2>
                         <div class="info-grid" id="stockMetrics"></div>
                     </div>
+                </div>
+                <!-- 第二排：公司簡介 -->
+                <div class="card">
+                    <h2>🏢 公司簡介</h2>
+                    <div class="description-box" id="stockDescription">載入中...</div>
                 </div>
             </div>
         </div>
@@ -142,21 +151,37 @@ async function searchStock() {
     if (!id) return;
     document.getElementById("stockCard").style.display = "block";
     document.getElementById("stockPrice").textContent = "載入中...";
+    document.getElementById("stockDescription").textContent = "載入中...";
+
     const res = await fetch(`/api/stock/${id}`);
     const data = await res.json();
+
     if (data.error) {
         document.getElementById("stockPrice").textContent = "查無資料";
+        document.getElementById("stockDescription").textContent = "查無資料";
         return;
     }
+
     document.getElementById("stockName").textContent = data.name || id;
     document.getElementById("stockPrice").textContent = `${data.price?.toFixed(1) || "--"} 元`;
-    document.getElementById("stockHighLow").textContent = `產業：${data.industry || "N/A"}`;
+    document.getElementById("stockHighLow").textContent = `今日資料（延遲約 15 分鐘）`;
+
+    // 產業標籤
+    document.getElementById("stockTags").innerHTML = `
+        ${data.industry ? `<span class="tag">🏭 ${data.industry}</span>` : ""}
+        ${data.market_cap ? `<span class="tag">💰 市值 ${(data.market_cap/1e8).toFixed(0)} 億</span>` : ""}
+    `;
+
+    // 財務指標
     document.getElementById("stockMetrics").innerHTML = `
         <div class="info-item"><div class="info-label">本益比 P/E</div><div class="info-value">${typeof data.pe_ratio === "number" ? data.pe_ratio.toFixed(1) : "N/A"}</div></div>
         <div class="info-item"><div class="info-label">股價淨值比 P/B</div><div class="info-value">${typeof data.pb_ratio === "number" ? data.pb_ratio.toFixed(1) : "N/A"}</div></div>
-        <div class="info-item"><div class="info-label">ROE</div><div class="info-value">${typeof data.roe === "number" ? (data.roe * 100).toFixed(1) + "%" : "N/A"}</div></div>
-        <div class="info-item"><div class="info-label">ROA</div><div class="info-value">${typeof data.roa === "number" ? (data.roa * 100).toFixed(1) + "%" : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">ROE 股東權益報酬率</div><div class="info-value">${typeof data.roe === "number" ? (data.roe * 100).toFixed(1) + "%" : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">ROA 資產報酬率</div><div class="info-value">${typeof data.roa === "number" ? (data.roa * 100).toFixed(1) + "%" : "N/A"}</div></div>
     `;
+
+    // 公司簡介
+    document.getElementById("stockDescription").textContent = data.description || "暫無簡介資料";
 }
 
 let chartInstance = null;
