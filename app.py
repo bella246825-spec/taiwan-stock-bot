@@ -1,14 +1,10 @@
-# 修正 SSL 問題的 app.py
-app_code = '''
 from flask import Flask, render_template, jsonify, request
 import yfinance as yf
 import requests
 import pandas as pd
 from datetime import datetime
-import ssl
 import urllib3
 
-# 停用 SSL 驗證（解決證交所憑證問題）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
@@ -30,7 +26,6 @@ def get_institutional_investors():
         today = datetime.now().strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={today}&selectType=ALLBUT0999&response=json"
         headers = {"User-Agent": "Mozilla/5.0"}
-        # 加上 verify=False 跳過 SSL 驗證
         res = requests.get(url, headers=headers, timeout=10, verify=False)
         data = res.json()
 
@@ -89,9 +84,3 @@ def api_stock(stock_id):
 
 if __name__ == "__main__":
     app.run(debug=True)
-'''
-
-with open("taiwan_stock_bot/app.py", "w", encoding="utf-8") as f:
-    f.write(app_code)
-
-print("✅ app.py 修正完成")
