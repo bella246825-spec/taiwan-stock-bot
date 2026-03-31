@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股儀表板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #0f172a; color: #e2e8f0; }
+        .header { background: #1e293b; padding: 20px 40px; border-bottom: 1px solid #334155; }
+        .header h1 { font-size: 24px; color: #38bdf8; }
+        .container { max-width: 1200px; margin: 30px auto; padding: 0 20px; }
+        .search-bar { display: flex; gap: 10px; margin-bottom: 30px; }
+        .search-bar input { flex: 1; padding: 12px 16px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 16px; }
+        .search-bar button { padding: 12px 24px; border-radius: 8px; border: none; background: #38bdf8; color: #0f172a; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .search-bar button:hover { background: #7dd3fc; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+        .card { background: #1e293b; border-radius: 12px; padding: 24px; border: 1px solid #334155; }
+        .card h2 { font-size: 16px; color: #94a3b8; margin-bottom: 16px; }
+        .price-big { font-size: 48px; font-weight: bold; color: #38bdf8; }
+        .price-sub { font-size: 14px; color: #64748b; margin-top: 8px; }
+        .tag { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; margin: 4px 2px; }
+        .tag-green { background: #064e3b; color: #34d399; }
+        .tag-red { background: #4c0519; color: #f87171; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th { color: #64748b; padding: 8px; text-align: left; border-bottom: 1px solid #334155; }
+        td { padding: 10px 8px; border-bottom: 1px solid #1e293b; }
+        .positive { color: #34d399; }
+        .negative { color: #f87171; }
+        .loading { color: #64748b; font-size: 14px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .info-item { background: #0f172a; border-radius: 8px; padding: 12px; }
+        .info-label { font-size: 12px; color: #64748b; }
+        .info-value { font-size: 18px; font-weight: bold; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>📈 台股儀表板</h1>
+    </div>
+    <div class="container">
+
+        <!-- 股票查詢 -->
+        <div class="search-bar">
+            <input type="text" id="stockInput" placeholder="輸入股票代號，例如 2330（台積電）" />
+            <button onclick="searchStock()">查詢</button>
+        </div>
+
+        <!-- 股票資訊卡 -->
+        <div id="stockCard" style="display:none; margin-bottom:30px;">
+            <div class="grid">
+                <div class="card">
+                    <h2 id="stockName">股票名稱</h2>
+                    <div class="price-big" id="stockPrice">--</div>
+                    <div class="price-sub" id="stockHighLow"></div>
+                </div>
+                <div class="card">
+                    <h2>財務指標</h2>
+                    <div class="info-grid" id="stockMetrics"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 三大法人 -->
+        <div class="grid">
+            <div class="card">
+                <h2>🔥 三大法人買超前十名</h2>
+                <div id="buyTable"><span class="loading">載入中...</span></div>
+            </div>
+            <div class="card">
+                <h2>❄️ 三大法人賣超前十名</h2>
+                <div id="sellTable"><span class="loading">載入中...</span></div>
+            </div>
+        </div>
+
+        <!-- 圖表 -->
+        <div class="card" style="margin-top:20px;">
+            <h2>📊 買賣超比較圖</h2>
+            <canvas id="institutionalChart" height="100"></canvas>
+        </div>
+
+    </div>
+
+<script>
+// 查詢個股
+async function searchStock() {
+    const id = document.getElementById("stockInput").value.trim();
+    if (!id) return;
+
+    document.getElementById("stockCard").style.display = "block";
+    document.getElementById("stockPrice").textContent = "載入中...";
+
+    const res = await fetch(`/api/stock/${id}`);
+    const data = await res.json();
+
+    if (data.error) {
+        document.getElementById("stockPrice").textContent = "查無資料";
+        return;
+    }
+
+    document.getElementById("stockName").textContent = `${data.name || id}`;
+    document.getElementById("stockPrice").textContent = `${data.price?.toFixed(1) || "--"} 元`;
+    document.getElementById("stockHighLow").textContent = `本益比：${typeof data.pe_ratio === "number" ? data.pe_ratio.toFixed(1) : "N/A"}`;
+
+    document.getElementById("stockMetrics").innerHTML = `
+        <div class="info-item"><div class="info-label">本益比 P/E</div><div class="info-value">${typeof data.pe_ratio === "number" ? data.pe_ratio.toFixed(1) : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">股價淨值比 P/B</div><div class="info-value">${typeof data.pb_ratio === "number" ? data.pb_ratio.toFixed(1) : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">ROE 股東權益報酬</div><div class="info-value">${typeof data.roe === "number" ? (data.roe * 100).toFixed(1) + "%" : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">ROA 資產報酬率</div><div class="info-value">${typeof data.roa === "number" ? (data.roa * 100).toFixed(1) + "%" : "N/A"}</div></div>
+    `;
+}
+
+// 法人資料
+let chartInstance = null;
+
+async function loadInstitutional() {
+    const res = await fetch("/api/institutional");
+    const data = await res.json();
+
+    if (data.error) {
+        document.getElementById("buyTable").innerHTML = `<span class="loading">${data.error}</span>`;
+        document.getElementById("sellTable").innerHTML = `<span class="loading">${data.error}</span>`;
+        return;
+    }
+
+    // 買超表格
+    document.getElementById("buyTable").innerHTML = `
+        <table>
+            <tr><th>股票名稱</th><th>買超（張）</th></tr>
+            ${data.buy.map(r => `<tr><td>${r["股票名稱"]}</td><td class="positive">+${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        </table>`;
+
+    // 賣超表格
+    document.getElementById("sellTable").innerHTML = `
+        <table>
+            <tr><th>股票名稱</th><th>賣超（張）</th></tr>
+            ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        </table>`;
+
+    // 圖表
+    const labels = [...data.buy.map(r => r["股票名稱"]), ...data.sell.map(r => r["股票名稱"])];
+    const values = [...data.buy.map(r => r["三大法人合計"]/1000), ...data.sell.map(r => r["三大法人合計"]/1000)];
+    const colors = values.map(v => v >= 0 ? "#34d399" : "#f87171");
+
+    if (chartInstance) chartInstance.destroy();
+    chartInstance = new Chart(document.getElementById("institutionalChart"), {
+        type: "bar",
+        data: {
+            labels,
+            datasets: [{ label: "三大法人買賣超（張）", data: values, backgroundColor: colors }]
+        },
+        options: {
+            plugins: { legend: { labels: { color: "#e2e8f0" } } },
+            scales: {
+                x: { ticks: { color: "#94a3b8" }, grid: { color: "#1e293b" } },
+                y: { ticks: { color: "#94a3b8" }, grid: { color: "#334155" } }
+            }
+        }
+    });
+}
+
+// 頁面載入時自動抓法人資料
+loadInstitutional();
+</script>
+</body>
+</html>
