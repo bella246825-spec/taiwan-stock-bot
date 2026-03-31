@@ -9,6 +9,22 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
+# ============================
+# 共用：抓股票清單（過濾ETF）
+# ============================
+def get_stock_id_list():
+    url = "https://api.finmindtrade.com/api/v4/data"
+    params = {"dataset": "TaiwanStockInfo", "token": ""}
+    res = requests.get(url, params=params)
+    data = res.json()
+    df_info = pd.DataFrame(data["data"])[["stock_id", "industry_category"]]
+    exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
+               "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
+    return df_info[~df_info["industry_category"].isin(exclude)]
+
+# ============================
+# 工具函數
+# ============================
 def get_stock_price(stock_id):
     try:
         ticker = yf.Ticker(f"{stock_id}.TW")
@@ -61,17 +77,8 @@ def get_industry_institutional():
         df_fund = df_fund[["證券代號", "證券名稱", "三大法人買賣超股數"]]
         df_fund["三大法人買賣超股數"] = df_fund["三大法人買賣超股數"].str.replace(",", "").astype(float)
 
-        url2 = "https://api.finmindtrade.com/api/v4/data"
-        params = {"dataset": "TaiwanStockInfo", "token": ""}
-        res2 = requests.get(url2, params=params)
-        data2 = res2.json()
-        df_info = pd.DataFrame(data2["data"])[["stock_id", "industry_category"]]
-
+        df_info = get_stock_id_list()
         df_merged = pd.merge(df_fund, df_info, left_on="證券代號", right_on="stock_id", how="left")
-
-        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
-                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-        df_merged = df_merged[~df_merged["industry_category"].isin(exclude)]
         df_merged = df_merged.dropna(subset=["industry_category"])
 
         result = {}
@@ -80,6 +87,51 @@ def get_industry_institutional():
             result[industry] = top5.to_dict("records")
 
         return result
+    except Exception as e:
+        return {"error": str(e)}
+
+def get_weekly_institutional():
+    try:
+        today = datetime.now()
+        monday = today - timedelta(days=today.weekday())
+        dates = []
+        for i in range(5):
+            d = monday + timedelta(days=i)
+            if d <= today:
+                dates.append(d.strftime("%Y%m%d"))
+
+        df_info = get_stock_id_list()
+        stock_only = df_info["stock_id"].tolist()
+
+        all_df = []
+        for date in dates:
+            url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date}&selectType=ALLBUT0999&response=json"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            res = requests.get(url, headers=headers, timeout=10, verify=False)
+            data = res.json()
+            if data.get("stat") != "OK":
+                continue
+            df = pd.DataFrame(data["data"], columns=data["fields"])
+            df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+            df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
+            df = df[df["證券代號"].isin(stock_only)]
+            all_df.append(df)
+
+        if not all_df:
+            return {"error": "本週尚無資料"}
+
+        combined = pd.concat(all_df)
+        weekly = combined.groupby("證券名稱")["三大法人買賣超股數"].sum().reset_index()
+        weekly.columns = ["股票名稱", "週合計買賣超"]
+
+        top10_buy = weekly.nlargest(10, "週合計買賣超").to_dict("records")
+        top10_sell = weekly.nsmallest(10, "週合計買賣超").to_dict("records")
+
+        return {
+            "buy": top10_buy,
+            "sell": top10_sell,
+            "dates": dates
+        }
     except Exception as e:
         return {"error": str(e)}
 
@@ -103,6 +155,9 @@ def get_stock_info(stock_id):
     except Exception as e:
         return {"error": str(e)}
 
+# ============================
+# 路由
+# ============================
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -118,6 +173,10 @@ def api_institutional():
 @app.route("/api/industry")
 def api_industry():
     return jsonify(get_industry_institutional())
+
+@app.route("/api/weekly")
+def api_weekly():
+    return jsonify(get_weekly_institutional())
 
 @app.route("/api/stock/<stock_id>")
 def api_stock(stock_id):
