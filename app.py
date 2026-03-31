@@ -12,23 +12,22 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-# 簡單快取，避免 Yahoo Finance Rate Limit
 _cache = {}
-CACHE_TTL = 300  # 快取 5 分鐘
+CACHE_TTL = 300
 
 def cache_get(key):
     if key in _cache:
         value, ts = _cache[key]
         if time.time() - ts < CACHE_TTL:
-            return value
-    return None
+            return value, True
+    return None, False
 
 def cache_set(key, value):
     _cache[key] = (value, time.time())
 
 def get_stock_id_list():
-    cached = cache_get("stock_id_list")
-    if cached:
+    cached, found = cache_get("stock_id_list")
+    if found:
         return cached
     url = "https://api.finmindtrade.com/api/v4/data"
     params = {"dataset": "TaiwanStockInfo", "token": ""}
@@ -54,8 +53,8 @@ def get_stock_price(stock_id):
         return {"error": str(e)}
 
 def get_institutional_investors():
-    cached = cache_get("institutional")
-    if cached:
+    cached, found = cache_get("institutional")
+    if found:
         return cached
     try:
         today = datetime.now().strftime("%Y%m%d")
@@ -84,8 +83,8 @@ def get_institutional_investors():
         return {"error": str(e)}
 
 def get_industry_institutional():
-    cached = cache_get("industry")
-    if cached:
+    cached, found = cache_get("industry")
+    if found:
         return cached
     try:
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
@@ -116,8 +115,8 @@ def get_industry_institutional():
         return {"error": str(e)}
 
 def get_weekly_institutional():
-    cached = cache_get("weekly")
-    if cached:
+    cached, found = cache_get("weekly")
+    if found:
         return cached
     try:
         today = datetime.now()
@@ -163,11 +162,11 @@ def get_weekly_institutional():
 
 def get_stock_info(stock_id):
     cache_key = f"stock_{stock_id}"
-    cached = cache_get(cache_key)
-    if cached:
+    cached, found = cache_get(cache_key)
+    if found:
         return cached
     try:
-        time.sleep(1)  # 避免太快請求
+        time.sleep(1)
         ticker = yf.Ticker(f"{stock_id}.TW")
         info = ticker.info
         fast = ticker.fast_info
