@@ -5,10 +5,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 import urllib3
 import os
+from googletrans import Translator
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
+translator = Translator()
 
 def get_stock_id_list():
     url = "https://api.finmindtrade.com/api/v4/data"
@@ -122,11 +124,7 @@ def get_weekly_institutional():
         top10_buy = weekly.nlargest(10, "週合計買賣超").to_dict("records")
         top10_sell = weekly.nsmallest(10, "週合計買賣超").to_dict("records")
 
-        return {
-            "buy": top10_buy,
-            "sell": top10_sell,
-            "dates": dates
-        }
+        return {"buy": top10_buy, "sell": top10_sell, "dates": dates}
     except Exception as e:
         return {"error": str(e)}
 
@@ -135,10 +133,21 @@ def get_stock_info(stock_id):
         ticker = yf.Ticker(f"{stock_id}.TW")
         info = ticker.info
         fast = ticker.fast_info
+
+        # 翻譯公司簡介
+        description_en = info.get("longBusinessSummary", "")
+        description_zh = "暫無簡介資料"
+        if description_en:
+            try:
+                translated = translator.translate(description_en, dest="zh-tw")
+                description_zh = translated.text
+            except:
+                description_zh = description_en  # 翻譯失敗就顯示英文
+
         return {
             "name": info.get("longName", ""),
             "industry": info.get("industry", ""),
-            "description": info.get("longBusinessSummary", "暫無資料"),
+            "description": description_zh,
             "price": fast.last_price,
             "pe_ratio": info.get("trailingPE", "N/A"),
             "pb_ratio": info.get("priceToBook", "N/A"),
