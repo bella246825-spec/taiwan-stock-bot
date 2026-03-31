@@ -42,15 +42,17 @@
         .industry-card td { padding: 6px 4px; }
         .filter-bar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
         .filter-bar input { padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 14px; width: 200px; }
+        .week-label { font-size: 13px; color: #64748b; margin-bottom: 16px; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>📈 台股儀表板</h1>
         <div class="nav">
-            <button class="active" onclick="showPage('home')">總覽</button>
-            <button onclick="showPage('industry')">產業分類</button>
-            <button onclick="showPage('stock')">個股查詢</button>
+            <button class="active" onclick="showPage('home', this)">總覽</button>
+            <button onclick="showPage('weekly', this)">週彙總</button>
+            <button onclick="showPage('industry', this)">產業分類</button>
+            <button onclick="showPage('stock', this)">個股查詢</button>
         </div>
     </div>
 
@@ -71,6 +73,26 @@
             <div class="card">
                 <h2>📊 買賣超比較圖</h2>
                 <canvas id="institutionalChart" height="100"></canvas>
+            </div>
+        </div>
+
+        <!-- 週彙總頁面 -->
+        <div class="page" id="page-weekly">
+            <div class="grid" style="margin-bottom:20px;">
+                <div class="card">
+                    <h2>🔥 本週三大法人買超前十名</h2>
+                    <div class="week-label" id="weekDates">載入中...</div>
+                    <div id="weekBuyTable"><span class="loading">載入中...</span></div>
+                </div>
+                <div class="card">
+                    <h2>❄️ 本週三大法人賣超前十名</h2>
+                    <div class="week-label"> </div>
+                    <div id="weekSellTable"><span class="loading">載入中...</span></div>
+                </div>
+            </div>
+            <div class="card">
+                <h2>📊 本週買賣超比較圖</h2>
+                <canvas id="weeklyChart" height="100"></canvas>
             </div>
         </div>
 
@@ -108,29 +130,24 @@
     </div>
 
 <script>
-// 頁面切換
-function showPage(name) {
+function showPage(name, btn) {
     document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
     document.querySelectorAll(".nav button").forEach(b => b.classList.remove("active"));
     document.getElementById("page-" + name).classList.add("active");
-    event.target.classList.add("active");
+    btn.classList.add("active");
 }
 
-// 個股查詢
 async function searchStock() {
     const id = document.getElementById("stockInput").value.trim();
     if (!id) return;
     document.getElementById("stockCard").style.display = "block";
     document.getElementById("stockPrice").textContent = "載入中...";
-
     const res = await fetch(`/api/stock/${id}`);
     const data = await res.json();
-
     if (data.error) {
         document.getElementById("stockPrice").textContent = "查無資料";
         return;
     }
-
     document.getElementById("stockName").textContent = data.name || id;
     document.getElementById("stockPrice").textContent = `${data.price?.toFixed(1) || "--"} 元`;
     document.getElementById("stockHighLow").textContent = `產業：${data.industry || "N/A"}`;
@@ -142,34 +159,26 @@ async function searchStock() {
     `;
 }
 
-// 法人資料
 let chartInstance = null;
 async function loadInstitutional() {
     const res = await fetch("/api/institutional");
     const data = await res.json();
-
     if (data.error) {
         document.getElementById("buyTable").innerHTML = `<span class="loading">${data.error}</span>`;
         document.getElementById("sellTable").innerHTML = `<span class="loading">${data.error}</span>`;
         return;
     }
-
     document.getElementById("buyTable").innerHTML = `
-        <table>
-            <tr><th>股票名稱</th><th>買超（張）</th></tr>
-            ${data.buy.map(r => `<tr><td>${r["股票名稱"]}</td><td class="positive">+${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        <table><tr><th>股票名稱</th><th>買超（張）</th></tr>
+        ${data.buy.map(r => `<tr><td>${r["股票名稱"]}</td><td class="positive">+${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
         </table>`;
-
     document.getElementById("sellTable").innerHTML = `
-        <table>
-            <tr><th>股票名稱</th><th>賣超（張）</th></tr>
-            ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        <table><tr><th>股票名稱</th><th>賣超（張）</th></tr>
+        ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
         </table>`;
-
     const labels = [...data.buy.map(r => r["股票名稱"]), ...data.sell.map(r => r["股票名稱"])];
     const values = [...data.buy.map(r => r["三大法人合計"]/1000), ...data.sell.map(r => r["三大法人合計"]/1000)];
     const colors = values.map(v => v >= 0 ? "#34d399" : "#f87171");
-
     if (chartInstance) chartInstance.destroy();
     chartInstance = new Chart(document.getElementById("institutionalChart"), {
         type: "bar",
@@ -184,7 +193,42 @@ async function loadInstitutional() {
     });
 }
 
-// 產業分類
+let weeklyChartInstance = null;
+async function loadWeekly() {
+    const res = await fetch("/api/weekly");
+    const data = await res.json();
+    if (data.error) {
+        document.getElementById("weekBuyTable").innerHTML = `<span class="loading">${data.error}</span>`;
+        document.getElementById("weekSellTable").innerHTML = `<span class="loading">${data.error}</span>`;
+        return;
+    }
+    const dateStr = data.dates.map(d => `${d.slice(4,6)}/${d.slice(6,8)}`).join("、");
+    document.getElementById("weekDates").textContent = `統計區間：${dateStr}`;
+    document.getElementById("weekBuyTable").innerHTML = `
+        <table><tr><th>股票名稱</th><th>週合計（張）</th></tr>
+        ${data.buy.map(r => `<tr><td>${r["股票名稱"]}</td><td class="positive">+${(r["週合計買賣超"]/1000).toFixed(0)}</td></tr>`).join("")}
+        </table>`;
+    document.getElementById("weekSellTable").innerHTML = `
+        <table><tr><th>股票名稱</th><th>週合計（張）</th></tr>
+        ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["週合計買賣超"]/1000).toFixed(0)}</td></tr>`).join("")}
+        </table>`;
+    const labels = [...data.buy.map(r => r["股票名稱"]), ...data.sell.map(r => r["股票名稱"])];
+    const values = [...data.buy.map(r => r["週合計買賣超"]/1000), ...data.sell.map(r => r["週合計買賣超"]/1000)];
+    const colors = values.map(v => v >= 0 ? "#34d399" : "#f87171");
+    if (weeklyChartInstance) weeklyChartInstance.destroy();
+    weeklyChartInstance = new Chart(document.getElementById("weeklyChart"), {
+        type: "bar",
+        data: { labels, datasets: [{ label: "本週三大法人買賣超（張）", data: values, backgroundColor: colors }] },
+        options: {
+            plugins: { legend: { labels: { color: "#e2e8f0" } } },
+            scales: {
+                x: { ticks: { color: "#94a3b8" }, grid: { color: "#1e293b" } },
+                y: { ticks: { color: "#94a3b8" }, grid: { color: "#334155" } }
+            }
+        }
+    });
+}
+
 let industryData = {};
 async function loadIndustry() {
     const res = await fetch("/api/industry");
@@ -224,8 +268,8 @@ function filterIndustry() {
     renderIndustry(filtered);
 }
 
-// 頁面載入
 loadInstitutional();
+loadWeekly();
 loadIndustry();
 </script>
 </body>
