@@ -5,13 +5,31 @@ import pandas as pd
 from datetime import datetime, timedelta
 import urllib3
 import os
+import time
 from deep_translator import GoogleTranslator
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
+# 簡單快取，避免 Yahoo Finance Rate Limit
+_cache = {}
+CACHE_TTL = 300  # 快取 5 分鐘
+
+def cache_get(key):
+    if key in _cache:
+        value, ts = _cache[key]
+        if time.time() - ts < CACHE_TTL:
+            return value
+    return None
+
+def cache_set(key, value):
+    _cache[key] = (value, time.time())
+
 def get_stock_id_list():
+    cached = cache_get("stock_id_list")
+    if cached:
+        return cached
     url = "https://api.finmindtrade.com/api/v4/data"
     params = {"dataset": "TaiwanStockInfo", "token": ""}
     res = requests.get(url, params=params)
@@ -19,7 +37,9 @@ def get_stock_id_list():
     df_info = pd.DataFrame(data["data"])[["stock_id", "industry_category"]]
     exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
                "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-    return df_info[~df_info["industry_category"].isin(exclude)]
+    result = df_info[~df_info["industry_category"].isin(exclude)]
+    cache_set("stock_id_list", result)
+    return result
 
 def get_stock_price(stock_id):
     try:
@@ -34,6 +54,9 @@ def get_stock_price(stock_id):
         return {"error": str(e)}
 
 def get_institutional_investors():
+    cached = cache_get("institutional")
+    if cached:
+        return cached
     try:
         today = datetime.now().strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={today}&selectType=ALLBUT0999&response=json"
@@ -54,11 +77,16 @@ def get_institutional_investors():
         top10_buy = df.nlargest(10, "三大法人合計")[["股票名稱", "三大法人合計"]].to_dict("records")
         top10_sell = df.nsmallest(10, "三大法人合計")[["股票名稱", "三大法人合計"]].to_dict("records")
 
-        return {"buy": top10_buy, "sell": top10_sell}
+        result = {"buy": top10_buy, "sell": top10_sell}
+        cache_set("institutional", result)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
 def get_industry_institutional():
+    cached = cache_get("industry")
+    if cached:
+        return cached
     try:
         yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
         url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={yesterday}&selectType=ALLBUT0999&response=json"
@@ -82,11 +110,15 @@ def get_industry_institutional():
             top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]]
             result[industry] = top5.to_dict("records")
 
+        cache_set("industry", result)
         return result
     except Exception as e:
         return {"error": str(e)}
 
 def get_weekly_institutional():
+    cached = cache_get("weekly")
+    if cached:
+        return cached
     try:
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
@@ -123,17 +155,23 @@ def get_weekly_institutional():
         top10_buy = weekly.nlargest(10, "週合計買賣超").to_dict("records")
         top10_sell = weekly.nsmallest(10, "週合計買賣超").to_dict("records")
 
-        return {"buy": top10_buy, "sell": top10_sell, "dates": dates}
+        result = {"buy": top10_buy, "sell": top10_sell, "dates": dates}
+        cache_set("weekly", result)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
 def get_stock_info(stock_id):
+    cache_key = f"stock_{stock_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
     try:
+        time.sleep(1)  # 避免太快請求
         ticker = yf.Ticker(f"{stock_id}.TW")
         info = ticker.info
         fast = ticker.fast_info
 
-        # 翻譯公司簡介
         description_en = info.get("longBusinessSummary", "")
         description_zh = "暫無簡介資料"
         if description_en:
@@ -142,7 +180,7 @@ def get_stock_info(stock_id):
             except:
                 description_zh = description_en
 
-        return {
+        result = {
             "name": info.get("longName", ""),
             "industry": info.get("industry", ""),
             "description": description_zh,
@@ -154,6 +192,8 @@ def get_stock_info(stock_id):
             "revenue_growth": info.get("revenueGrowth", "N/A"),
             "market_cap": info.get("marketCap", "N/A"),
         }
+        cache_set(cache_key, result)
+        return result
     except Exception as e:
         return {"error": str(e)}
 
