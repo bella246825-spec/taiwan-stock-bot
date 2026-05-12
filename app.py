@@ -26,88 +26,81 @@ def cache_get(key):
 def cache_set(key, value):
     _cache[key] = (value, time.time())
 
-def get_latest_trade_date():
-    """取得最近的交易日"""
-    today = datetime.now()
-    # 如果是週末往回找
-    for i in range(7):
-        d = today - timedelta(days=i)
-        if d.weekday() < 5:  # 週一到週五
-            return d.strftime("%Y-%m-%d")
-    return today.strftime("%Y-%m-%d")
+TWSE_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Referer": "https://www.twse.com.tw/zh/trading/foreign/t86.html",
+    "Accept": "application/json"
+}
 
-def get_prev_trade_date():
-    """取得前一個交易日"""
-    today = datetime.now()
-    for i in range(1, 8):
-        d = today - timedelta(days=i)
+def get_latest_trade_date():
+    """取得最近交易日，盤中返回前一日"""
+    now = datetime.now()
+    # 盤中（9:00~14:30）用前一交易日
+    start = 0 if now.hour >= 15 else 1
+    for i in range(start, 8):
+        d = now - timedelta(days=i)
         if d.weekday() < 5:
-            return d.strftime("%Y-%m-%d")
-    return (today - timedelta(days=1)).strftime("%Y-%m-%d")
+            return d.strftime("%Y%m%d")
+    return now.strftime("%Y%m%d")
+
+def fetch_twse_institutional(date):
+    """從證交所抓三大法人資料"""
+    url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date}&selectType=ALLBUT0999&response=json"
+    res = requests.get(url, headers=TWSE_HEADERS, timeout=15, verify=False)
+    data = res.json()
+    if data.get("stat") == "OK":
+        return data
+    return None
+
+def get_stock_id_list():
+    """取得股票清單，過濾ETF"""
+    cached, found = cache_get("stock_id_list")
+    if found:
+        return cached
+    params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
+    res = requests.get(FINMIND_URL, params=params, timeout=15)
+    data = res.json()
+    df_info = pd.DataFrame(data["data"])[["stock_id", "stock_name", "industry_category"]]
+    exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
+               "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
+    result = df_info[~df_info["industry_category"].isin(exclude)]
+    cache_set("stock_id_list", result)
+    return result
 
 def get_institutional_investors():
-    """取得三大法人買賣超前十名"""
     cached, found = cache_get("institutional")
     if found:
         return cached
     try:
-        # 盤中用前一日，盤後用當日
-        now = datetime.now()
-        if now.hour < 15:
-            date = get_prev_trade_date()
-        else:
-            date = get_latest_trade_date()
+        date = get_latest_trade_date()
+        data = fetch_twse_institutional(date)
 
-        params = {
-            "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
-            "start_date": date,
-            "end_date": date,
-            "token": FINMIND_TOKEN
-        }
-        res = requests.get(FINMIND_URL, params=params, timeout=15)
-        data = res.json()
+        # 如果當日沒資料，往前找最多5天
+        if not data:
+            for i in range(1, 6):
+                d = datetime.strptime(date, "%Y%m%d") - timedelta(days=i)
+                if d.weekday() < 5:
+                    data = fetch_twse_institutional(d.strftime("%Y%m%d"))
+                    date = d.strftime("%Y%m%d")
+                    if data:
+                        break
 
-        if data["status"] != 200 or not data["data"]:
-            # 嘗試前一日
-            date = get_prev_trade_date()
-            params["start_date"] = date
-            params["end_date"] = date
-            res = requests.get(FINMIND_URL, params=params, timeout=15)
-            data = res.json()
+        if not data:
+            return {"error": "暫時無法取得資料，請稍後再試"}
 
-        if data["status"] != 200 or not data["data"]:
-            return {"error": f"資料取得失敗：{data.get('msg', '未知錯誤')}"}
-
-        df = pd.DataFrame(data["data"])
-
-        # 三大法人合計
-        df_total = df.groupby("stock_id").agg(
-            買超=("buy", "sum"),
-            賣超=("sell", "sum"),
-            股票名稱=("stock_id", "first")
-        ).reset_index()
-
-        # 抓股票名稱
-        info_params = {
-            "dataset": "TaiwanStockInfo",
-            "token": FINMIND_TOKEN
-        }
-        info_res = requests.get(FINMIND_URL, params=info_params, timeout=15)
-        info_data = info_res.json()
-        df_info = pd.DataFrame(info_data["data"])[["stock_id", "stock_name", "industry_category"]]
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+        df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
 
         # 過濾ETF
-        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
-                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-        df_info = df_info[~df_info["industry_category"].isin(exclude)]
+        df_info = get_stock_id_list()
+        stock_only = df_info["stock_id"].tolist()
+        df = df[df["證券代號"].isin(stock_only)]
 
-        df_total = pd.merge(df_total, df_info, left_on="stock_id", right_on="stock_id", how="inner")
-        df_total["合計"] = df_total["買超"] - df_total["賣超"]
-
-        top10_buy = df_total.nlargest(10, "合計")[["stock_name", "合計"]].rename(
-            columns={"stock_name": "股票名稱", "合計": "三大法人合計"}).to_dict("records")
-        top10_sell = df_total.nsmallest(10, "合計")[["stock_name", "合計"]].rename(
-            columns={"stock_name": "股票名稱", "合計": "三大法人合計"}).to_dict("records")
+        top10_buy = df.nlargest(10, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]].rename(
+            columns={"三大法人買賣超股數": "三大法人合計"}).to_dict("records")
+        top10_sell = df.nsmallest(10, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]].rename(
+            columns={"三大法人買賣超股數": "三大法人合計"}).to_dict("records")
 
         result = {"buy": top10_buy, "sell": top10_sell, "date": date}
         cache_set("institutional", result)
@@ -116,58 +109,35 @@ def get_institutional_investors():
         return {"error": str(e)}
 
 def get_industry_institutional():
-    """取得各產業三大法人前五名"""
     cached, found = cache_get("industry")
     if found:
         return cached
     try:
-        now = datetime.now()
-        if now.hour < 15:
-            date = get_prev_trade_date()
-        else:
-            date = get_latest_trade_date()
+        date = get_latest_trade_date()
+        data = fetch_twse_institutional(date)
 
-        params = {
-            "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
-            "start_date": date,
-            "end_date": date,
-            "token": FINMIND_TOKEN
-        }
-        res = requests.get(FINMIND_URL, params=params, timeout=15)
-        data = res.json()
+        if not data:
+            for i in range(1, 6):
+                d = datetime.strptime(date, "%Y%m%d") - timedelta(days=i)
+                if d.weekday() < 5:
+                    data = fetch_twse_institutional(d.strftime("%Y%m%d"))
+                    if data:
+                        break
 
-        if data["status"] != 200 or not data["data"]:
-            date = get_prev_trade_date()
-            params["start_date"] = date
-            params["end_date"] = date
-            res = requests.get(FINMIND_URL, params=params, timeout=15)
-            data = res.json()
+        if not data:
+            return {"error": "暫時無法取得資料，請稍後再試"}
 
-        if data["status"] != 200 or not data["data"]:
-            return {"error": "資料取得失敗"}
+        df = pd.DataFrame(data["data"], columns=data["fields"])
+        df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+        df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
 
-        df = pd.DataFrame(data["data"])
-        df_total = df.groupby("stock_id").agg(
-            買超=("buy", "sum"),
-            賣超=("sell", "sum")
-        ).reset_index()
-        df_total["合計"] = df_total["買超"] - df_total["賣超"]
-
-        info_params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
-        info_res = requests.get(FINMIND_URL, params=info_params, timeout=15)
-        info_data = info_res.json()
-        df_info = pd.DataFrame(info_data["data"])[["stock_id", "stock_name", "industry_category"]]
-
-        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
-                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-        df_info = df_info[~df_info["industry_category"].isin(exclude)]
-
-        df_merged = pd.merge(df_total, df_info, on="stock_id", how="inner")
+        df_info = get_stock_id_list()
+        df_merged = pd.merge(df, df_info, left_on="證券代號", right_on="stock_id", how="inner")
 
         result = {}
         for industry, group in df_merged.groupby("industry_category"):
-            top5 = group.nlargest(5, "合計")[["stock_name", "合計"]]
-            result[industry] = [{"證券名稱": r["stock_name"], "三大法人買賣超股數": r["合計"]} for _, r in top5.iterrows()]
+            top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]]
+            result[industry] = [{"證券名稱": r["證券名稱"], "三大法人買賣超股數": r["三大法人買賣超股數"]} for _, r in top5.iterrows()]
 
         cache_set("industry", result)
         return result
@@ -175,59 +145,42 @@ def get_industry_institutional():
         return {"error": str(e)}
 
 def get_weekly_institutional():
-    """取得本週三大法人買賣超彙總"""
     cached, found = cache_get("weekly")
     if found:
         return cached
     try:
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
-        start_date = monday.strftime("%Y-%m-%d")
-        end_date = today.strftime("%Y-%m-%d")
 
-        params = {
-            "dataset": "TaiwanStockInstitutionalInvestorsBuySell",
-            "start_date": start_date,
-            "end_date": end_date,
-            "token": FINMIND_TOKEN
-        }
-        res = requests.get(FINMIND_URL, params=params, timeout=20)
-        data = res.json()
-
-        if data["status"] != 200 or not data["data"]:
-            return {"error": "本週尚無資料"}
-
-        df = pd.DataFrame(data["data"])
-
-        info_params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
-        info_res = requests.get(FINMIND_URL, params=info_params, timeout=15)
-        info_data = info_res.json()
-        df_info = pd.DataFrame(info_data["data"])[["stock_id", "stock_name", "industry_category"]]
-
-        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
-                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-        df_info = df_info[~df_info["industry_category"].isin(exclude)]
+        df_info = get_stock_id_list()
         stock_only = df_info["stock_id"].tolist()
 
-        df = df[df["stock_id"].isin(stock_only)]
-        df_total = df.groupby("stock_id").agg(
-            買超=("buy", "sum"),
-            賣超=("sell", "sum")
-        ).reset_index()
-        df_total["週合計"] = df_total["買超"] - df_total["賣超"]
-
-        df_total = pd.merge(df_total, df_info[["stock_id", "stock_name"]], on="stock_id", how="inner")
-
+        all_df = []
         dates = []
         for i in range(5):
             d = monday + timedelta(days=i)
-            if d <= today and d.weekday() < 5:
-                dates.append(d.strftime("%Y%m%d"))
+            if d > today or d.weekday() >= 5:
+                continue
+            date_str = d.strftime("%Y%m%d")
+            data = fetch_twse_institutional(date_str)
+            if not data:
+                continue
+            df = pd.DataFrame(data["data"], columns=data["fields"])
+            df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
+            df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
+            df = df[df["證券代號"].isin(stock_only)]
+            all_df.append(df)
+            dates.append(date_str)
 
-        top10_buy = df_total.nlargest(10, "週合計")[["stock_name", "週合計"]].rename(
-            columns={"stock_name": "股票名稱", "週合計": "週合計買賣超"}).to_dict("records")
-        top10_sell = df_total.nsmallest(10, "週合計")[["stock_name", "週合計"]].rename(
-            columns={"stock_name": "股票名稱", "週合計": "週合計買賣超"}).to_dict("records")
+        if not all_df:
+            return {"error": "本週尚無資料"}
+
+        combined = pd.concat(all_df)
+        weekly = combined.groupby("證券名稱")["三大法人買賣超股數"].sum().reset_index()
+        weekly.columns = ["股票名稱", "週合計買賣超"]
+
+        top10_buy = weekly.nlargest(10, "週合計買賣超").to_dict("records")
+        top10_sell = weekly.nsmallest(10, "週合計買賣超").to_dict("records")
 
         result = {"buy": top10_buy, "sell": top10_sell, "dates": dates}
         cache_set("weekly", result)
@@ -236,80 +189,54 @@ def get_weekly_institutional():
         return {"error": str(e)}
 
 def get_stock_info(stock_id):
-    """取得個股詳細資料"""
     cache_key = f"stock_{stock_id}"
     cached, found = cache_get(cache_key)
     if found:
         return cached
     try:
         # 基本資料
-        info_params = {
+        params = {
             "dataset": "TaiwanStockInfo",
             "stock_id": stock_id,
             "token": FINMIND_TOKEN
         }
-        info_res = requests.get(FINMIND_URL, params=info_params, timeout=15)
-        info_data = info_res.json()
+        res = requests.get(FINMIND_URL, params=params, timeout=15)
+        data = res.json()
 
-        if info_data["status"] != 200 or not info_data["data"]:
+        if data["status"] != 200 or not data["data"]:
             return {"error": "查無此股票代號"}
 
-        stock_info = info_data["data"][0]
+        stock_info = data["data"][0]
 
-        # 最新股價
+        # 最新股價（用證交所）
         date = get_latest_trade_date()
-        price_params = {
-            "dataset": "TaiwanStockPrice",
-            "data_id": stock_id,
-            "start_date": (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d"),
-            "end_date": date,
-            "token": FINMIND_TOKEN
-        }
-        price_res = requests.get(FINMIND_URL, params=price_params, timeout=15)
+        price_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date}&stockNo={stock_id}&response=json"
+        price_res = requests.get(price_url, headers=TWSE_HEADERS, timeout=15, verify=False)
         price_data = price_res.json()
 
         price = None
         high = None
         low = None
-        if price_data["status"] == 200 and price_data["data"]:
+        if price_data.get("stat") == "OK" and price_data.get("data"):
             latest = price_data["data"][-1]
-            price = latest.get("close")
-            high = latest.get("max")
-            low = latest.get("min")
-
-        # 財務資料
-        fin_params = {
-            "dataset": "TaiwanStockFinancialStatements",
-            "data_id": stock_id,
-            "start_date": (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d"),
-            "token": FINMIND_TOKEN
-        }
-        fin_res = requests.get(FINMIND_URL, params=fin_params, timeout=15)
-        fin_data = fin_res.json()
-
-        pe_ratio = "N/A"
-        pb_ratio = "N/A"
-        roe = "N/A"
-        roa = "N/A"
-
-        if fin_data["status"] == 200 and fin_data["data"]:
-            df_fin = pd.DataFrame(fin_data["data"])
-            if "per" in df_fin.columns:
-                pe_ratio = df_fin["per"].dropna().iloc[-1] if not df_fin["per"].dropna().empty else "N/A"
-            if "pbr" in df_fin.columns:
-                pb_ratio = df_fin["pbr"].dropna().iloc[-1] if not df_fin["pbr"].dropna().empty else "N/A"
+            try:
+                price = float(latest[6].replace(",", ""))  # 收盤價
+                high = float(latest[4].replace(",", ""))   # 最高價
+                low = float(latest[5].replace(",", ""))    # 最低價
+            except:
+                pass
 
         result = {
             "name": stock_info.get("stock_name", ""),
             "industry": stock_info.get("industry_category", ""),
-            "description": f"{stock_info.get('stock_name', '')} 屬於 {stock_info.get('industry_category', '')} 產業，股票代號為 {stock_id}。",
+            "description": f"{stock_info.get('stock_name', '')} 屬於台灣 {stock_info.get('industry_category', '')} 產業，股票代號為 {stock_id}。",
             "price": price,
             "high": high,
             "low": low,
-            "pe_ratio": pe_ratio,
-            "pb_ratio": pb_ratio,
-            "roe": roe,
-            "roa": roa,
+            "pe_ratio": "N/A",
+            "pb_ratio": "N/A",
+            "roe": "N/A",
+            "roa": "N/A",
             "market_cap": "N/A",
         }
         cache_set(cache_key, result)
