@@ -26,13 +26,6 @@ def cache_get(key):
 def cache_set(key, value):
     _cache[key] = (value, time.time())
 
-TWSE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
-    "Accept": "application/json, text/javascript, */*",
-    "Accept-Language": "zh-TW,zh;q=0.9",
-    "Referer": "https://www.twse.com.tw/",
-}
-
 def get_latest_trade_date():
     now = datetime.now()
     start = 0 if now.hour >= 15 else 1
@@ -45,7 +38,7 @@ def get_latest_trade_date():
 def fetch_twse_institutional(date):
     url = f"https://www.twse.com.tw/fund/T86?response=json&date={date}&selectType=ALLBUT0999"
     try:
-        res = requests.get(url, headers=TWSE_HEADERS, timeout=15, verify=False)
+        res = requests.get(url, timeout=15, verify=False)
         data = res.json()
         if data.get("stat") == "OK":
             return data
@@ -67,7 +60,7 @@ def get_stock_id_list():
         result = df_info[~df_info["industry_category"].isin(exclude)]
         cache_set("stock_id_list", result)
         return result
-    except Exception as e:
+    except:
         return pd.DataFrame(columns=["stock_id", "stock_name", "industry_category"])
 
 def get_institutional_investors():
@@ -208,10 +201,9 @@ def get_stock_info(stock_id):
 
         stock_info = data["data"][0]
 
-        # 股價用證交所
         date = get_latest_trade_date()
         price_url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date}&stockNo={stock_id}"
-        price_res = requests.get(price_url, headers=TWSE_HEADERS, timeout=15, verify=False)
+        price_res = requests.get(price_url, timeout=15, verify=False)
         price_data = price_res.json()
 
         price = None
