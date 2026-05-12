@@ -27,15 +27,14 @@ def cache_set(key, value):
     _cache[key] = (value, time.time())
 
 TWSE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Referer": "https://www.twse.com.tw/zh/trading/foreign/t86.html",
-    "Accept": "application/json"
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json, text/javascript, */*",
+    "Accept-Language": "zh-TW,zh;q=0.9",
+    "Referer": "https://www.twse.com.tw/",
 }
 
 def get_latest_trade_date():
-    """取得最近交易日，盤中返回前一日"""
     now = datetime.now()
-    # 盤中（9:00~14:30）用前一交易日
     start = 0 if now.hour >= 15 else 1
     for i in range(start, 8):
         d = now - timedelta(days=i)
@@ -44,28 +43,32 @@ def get_latest_trade_date():
     return now.strftime("%Y%m%d")
 
 def fetch_twse_institutional(date):
-    """從證交所抓三大法人資料"""
-    url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={date}&selectType=ALLBUT0999&response=json"
-    res = requests.get(url, headers=TWSE_HEADERS, timeout=15, verify=False)
-    data = res.json()
-    if data.get("stat") == "OK":
-        return data
+    url = f"https://www.twse.com.tw/fund/T86?response=json&date={date}&selectType=ALLBUT0999"
+    try:
+        res = requests.get(url, headers=TWSE_HEADERS, timeout=15, verify=False)
+        data = res.json()
+        if data.get("stat") == "OK":
+            return data
+    except:
+        pass
     return None
 
 def get_stock_id_list():
-    """取得股票清單，過濾ETF"""
     cached, found = cache_get("stock_id_list")
     if found:
         return cached
-    params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
-    res = requests.get(FINMIND_URL, params=params, timeout=15)
-    data = res.json()
-    df_info = pd.DataFrame(data["data"])[["stock_id", "stock_name", "industry_category"]]
-    exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
-               "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
-    result = df_info[~df_info["industry_category"].isin(exclude)]
-    cache_set("stock_id_list", result)
-    return result
+    try:
+        params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
+        res = requests.get(FINMIND_URL, params=params, timeout=15)
+        data = res.json()
+        df_info = pd.DataFrame(data["data"])[["stock_id", "stock_name", "industry_category"]]
+        exclude = ["ETF", "ETN", "受益證券", "存託憑證", "Index", "大盤", "所有證券",
+                   "上櫃ETF", "上櫃指數股票型基金(ETF)", "指數投資證券(ETN)", "創新板股票", "創新版股票"]
+        result = df_info[~df_info["industry_category"].isin(exclude)]
+        cache_set("stock_id_list", result)
+        return result
+    except Exception as e:
+        return pd.DataFrame(columns=["stock_id", "stock_name", "industry_category"])
 
 def get_institutional_investors():
     cached, found = cache_get("institutional")
@@ -75,7 +78,6 @@ def get_institutional_investors():
         date = get_latest_trade_date()
         data = fetch_twse_institutional(date)
 
-        # 如果當日沒資料，往前找最多5天
         if not data:
             for i in range(1, 6):
                 d = datetime.strptime(date, "%Y%m%d") - timedelta(days=i)
@@ -92,7 +94,6 @@ def get_institutional_investors():
         df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
         df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
 
-        # 過濾ETF
         df_info = get_stock_id_list()
         stock_only = df_info["stock_id"].tolist()
         df = df[df["證券代號"].isin(stock_only)]
@@ -194,7 +195,6 @@ def get_stock_info(stock_id):
     if found:
         return cached
     try:
-        # 基本資料
         params = {
             "dataset": "TaiwanStockInfo",
             "stock_id": stock_id,
@@ -208,9 +208,9 @@ def get_stock_info(stock_id):
 
         stock_info = data["data"][0]
 
-        # 最新股價（用證交所）
+        # 股價用證交所
         date = get_latest_trade_date()
-        price_url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date}&stockNo={stock_id}&response=json"
+        price_url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date}&stockNo={stock_id}"
         price_res = requests.get(price_url, headers=TWSE_HEADERS, timeout=15, verify=False)
         price_data = price_res.json()
 
@@ -220,9 +220,9 @@ def get_stock_info(stock_id):
         if price_data.get("stat") == "OK" and price_data.get("data"):
             latest = price_data["data"][-1]
             try:
-                price = float(latest[6].replace(",", ""))  # 收盤價
-                high = float(latest[4].replace(",", ""))   # 最高價
-                low = float(latest[5].replace(",", ""))    # 最低價
+                price = float(latest[6].replace(",", ""))
+                high = float(latest[4].replace(",", ""))
+                low = float(latest[5].replace(",", ""))
             except:
                 pass
 
