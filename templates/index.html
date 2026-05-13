@@ -133,6 +133,7 @@
                 <button onclick="searchStock()">查詢</button>
             </div>
             <div id="stockCard" style="display:none;">
+                <!-- 第一排：股價 + 財務指標 -->
                 <div class="grid" style="margin-bottom:16px;">
                     <div class="card">
                         <h2 id="stockName">股票名稱</h2>
@@ -145,6 +146,14 @@
                         <div class="info-grid" id="stockMetrics"></div>
                     </div>
                 </div>
+                <!-- 第二排：折線圖 -->
+                <div class="card" style="margin-bottom:16px;">
+                    <h2>📈 近期股價走勢</h2>
+                    <div class="chart-wrap">
+                        <canvas id="stockChart"></canvas>
+                    </div>
+                </div>
+                <!-- 第三排：公司簡介 -->
                 <div class="card">
                     <h2>🏢 公司簡介</h2>
                     <div class="description-box" id="stockDescription">載入中...</div>
@@ -162,32 +171,72 @@ function showPage(name, btn) {
     btn.classList.add("active");
 }
 
+let stockChartInstance = null;
+
 async function searchStock() {
     const id = document.getElementById("stockInput").value.trim();
     if (!id) return;
     document.getElementById("stockCard").style.display = "block";
     document.getElementById("stockPrice").textContent = "載入中...";
     document.getElementById("stockDescription").textContent = "載入中...";
+
     const res = await fetch(`/api/stock/${id}`);
     const data = await res.json();
+
     if (data.error) {
         document.getElementById("stockPrice").textContent = "查無資料";
         document.getElementById("stockDescription").textContent = data.error;
         return;
     }
+
     document.getElementById("stockName").textContent = data.name || id;
     document.getElementById("stockPrice").textContent = `${data.price?.toFixed(1) || "--"} 元`;
     document.getElementById("stockHighLow").textContent = `今日最高：${data.high || "--"}　最低：${data.low || "--"}`;
+
     document.getElementById("stockTags").innerHTML = `
         ${data.industry ? `<span class="tag">🏭 ${data.industry}</span>` : ""}
     `;
+
     document.getElementById("stockMetrics").innerHTML = `
-        <div class="info-item"><div class="info-label">本益比 P/E</div><div class="info-value">${typeof data.pe_ratio === "number" ? data.pe_ratio.toFixed(1) : "N/A"}</div></div>
-        <div class="info-item"><div class="info-label">股價淨值比 P/B</div><div class="info-value">${typeof data.pb_ratio === "number" ? data.pb_ratio.toFixed(1) : "N/A"}</div></div>
-        <div class="info-item"><div class="info-label">ROE</div><div class="info-value">${typeof data.roe === "number" ? (data.roe * 100).toFixed(1) + "%" : "N/A"}</div></div>
-        <div class="info-item"><div class="info-label">ROA</div><div class="info-value">${typeof data.roa === "number" ? (data.roa * 100).toFixed(1) + "%" : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">本益比 P/E</div><div class="info-value">${data.pe_ratio || "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">股價淨值比 P/B</div><div class="info-value">${data.pb_ratio || "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">殖利率</div><div class="info-value">${data.dividend_yield ? data.dividend_yield + "%" : "N/A"}</div></div>
+        <div class="info-item"><div class="info-label">最新財報</div><div class="info-value" style="font-size:13px;">${data.fiscal_quarter || "N/A"}</div></div>
     `;
+
     document.getElementById("stockDescription").textContent = data.description || "暫無簡介資料";
+
+    // 折線圖
+    if (data.history_dates && data.history_closes) {
+        if (stockChartInstance) stockChartInstance.destroy();
+        stockChartInstance = new Chart(document.getElementById("stockChart"), {
+            type: "line",
+            data: {
+                labels: data.history_dates,
+                datasets: [{
+                    label: `${data.name} 收盤價`,
+                    data: data.history_closes,
+                    borderColor: "#38bdf8",
+                    backgroundColor: "rgba(56,189,248,0.1)",
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: "#38bdf8",
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { labels: { color: "#e2e8f0", font: { size: 12 } } }
+                },
+                scales: {
+                    x: { ticks: { color: "#94a3b8", font: { size: 10 }, maxRotation: 45 }, grid: { color: "#1e293b" } },
+                    y: { ticks: { color: "#94a3b8", font: { size: 11 } }, grid: { color: "#334155" } }
+                }
+            }
+        });
+    }
 }
 
 let chartInstance = null;
