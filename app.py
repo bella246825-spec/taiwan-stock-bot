@@ -29,7 +29,6 @@ def cache_set(key, value):
     _cache[key] = (value, time.time())
 
 def fetch_github_json(filename):
-    """從 GitHub 讀取 JSON 檔案"""
     try:
         res = requests.get(f"{GITHUB_RAW}/{filename}", timeout=10)
         return res.json()
@@ -69,10 +68,9 @@ def get_stock_info(stock_id):
     if found:
         return cached
     try:
-        # 基本資料用 FinMind
+        # 抓全部股票清單，再篩選對應代號
         params = {
             "dataset": "TaiwanStockInfo",
-            "stock_id": stock_id,
             "token": FINMIND_TOKEN
         }
         res = requests.get(FINMIND_URL, params=params, timeout=15)
@@ -81,7 +79,13 @@ def get_stock_info(stock_id):
         if data["status"] != 200 or not data["data"]:
             return {"error": "查無此股票代號"}
 
-        stock_info = data["data"][0]
+        df_info = pd.DataFrame(data["data"])
+        match = df_info[df_info["stock_id"] == stock_id]
+
+        if match.empty:
+            return {"error": f"查無股票代號 {stock_id}"}
+
+        stock_info = match.iloc[0].to_dict()
 
         # 股價用 FinMind
         today = datetime.now()
