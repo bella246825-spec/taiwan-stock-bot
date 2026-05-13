@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import urllib3
 import os
 import time
-import json
+import twstock
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -68,11 +68,8 @@ def get_stock_info(stock_id):
     if found:
         return cached
     try:
-        # 抓全部股票清單，再篩選對應代號
-        params = {
-            "dataset": "TaiwanStockInfo",
-            "token": FINMIND_TOKEN
-        }
+        # 基本資料用 FinMind
+        params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
         res = requests.get(FINMIND_URL, params=params, timeout=15)
         data = res.json()
 
@@ -81,48 +78,43 @@ def get_stock_info(stock_id):
 
         df_info = pd.DataFrame(data["data"])
         match = df_info[df_info["stock_id"] == stock_id]
-
         if match.empty:
             return {"error": f"查無股票代號 {stock_id}"}
-
         stock_info = match.iloc[0].to_dict()
 
-        # 股價用 FinMind
-        today = datetime.now()
-        start_date = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-        end_date = today.strftime("%Y-%m-%d")
+        # 財務指標用證交所 OpenAPI
+        per_res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d", timeout=15)
+        per_data = per_res.json()
+        stock_per = next((d for d in per_data if d.get("Code") == stock_id), None)
 
-        price_params = {
-            "dataset": "TaiwanStockPrice",
-            "data_id": stock_id,
-            "start_date": start_date,
-            "end_date": end_date,
-            "token": FINMIND_TOKEN
-        }
-        price_res = requests.get(FINMIND_URL, params=price_params, timeout=15)
-        price_data = price_res.json()
+        pe_ratio = stock_per.get("PEratio", "N/A") if stock_per else "N/A"
+        pb_ratio = stock_per.get("PBratio", "N/A") if stock_per else "N/A"
+        dividend_yield = stock_per.get("DividendYield", "N/A") if stock_per else "N/A"
+        close_price = stock_per.get("ClosePrice", None) if stock_per else None
 
-        price = None
-        high = None
-        low = None
-        if price_data["status"] == 200 and price_data["data"]:
-            latest = price_data["data"][-1]
-            price = latest.get("close")
-            high = latest.get("max")
-            low = latest.get("min")
+        # 歷史股價用 twstock
+        stock_obj = twstock.Stock(stock_id)
+        dates = [d.strftime("%Y-%m-%d") for d in stock_obj.date]
+        closes = stock_obj.close
+        highs = stock_obj.high
+        lows = stock_obj.low
+
+        price = closes[-1] if closes else None
+        high = highs[-1] if highs else None
+        low = lows[-1] if lows else None
 
         result = {
             "name": stock_info.get("stock_name", ""),
             "industry": stock_info.get("industry_category", ""),
             "description": f"{stock_info.get('stock_name', '')} 屬於台灣 {stock_info.get('industry_category', '')} 產業，股票代號為 {stock_id}。",
-            "price": price,
+            "price": float(close_price) if close_price else price,
             "high": high,
             "low": low,
-            "pe_ratio": "N/A",
-            "pb_ratio": "N/A",
-            "roe": "N/A",
-            "roa": "N/A",
-            "market_cap": "N/A",
+            "pe_ratio": pe_ratio,
+            "pb_ratio": pb_ratio,
+            "dividend_yield": dividend_yield,
+            "history_dates": dates,
+            "history_closes": closes,
         }
         cache_set(cache_key, result)
         return result
