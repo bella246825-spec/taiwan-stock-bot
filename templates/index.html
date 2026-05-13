@@ -8,40 +8,24 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: "Microsoft JhengHei", sans-serif; background: #0f172a; color: #e2e8f0; }
-
-        /* Header */
         .header { background: #1e293b; padding: 16px 20px; border-bottom: 1px solid #334155; }
         .header h1 { font-size: 20px; color: #38bdf8; margin-bottom: 12px; }
         .nav { display: flex; flex-wrap: wrap; gap: 8px; }
         .nav button { flex: 1; min-width: 70px; padding: 8px 10px; border-radius: 8px; border: none; background: #334155; color: #e2e8f0; cursor: pointer; font-size: 13px; }
         .nav button.active { background: #38bdf8; color: #0f172a; font-weight: bold; }
-
-        /* Container */
         .container { max-width: 1200px; margin: 16px auto; padding: 0 12px; }
         .page { display: none; }
         .page.active { display: block; }
-
-        /* Search */
         .search-bar { display: flex; gap: 8px; margin-bottom: 20px; }
         .search-bar input { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 15px; min-width: 0; }
         .search-bar button { padding: 10px 16px; border-radius: 8px; border: none; background: #38bdf8; color: #0f172a; font-weight: bold; cursor: pointer; font-size: 15px; white-space: nowrap; }
-
-        /* Grid */
         .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
-        @media (min-width: 768px) {
-            .grid { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        /* Card */
+        @media (min-width: 768px) { .grid { grid-template-columns: repeat(2, 1fr); } }
         .card { background: #1e293b; border-radius: 12px; padding: 16px; border: 1px solid #334155; overflow: hidden; }
         .card h2 { font-size: 15px; color: #94a3b8; margin-bottom: 14px; }
-
-        /* Price */
         .price-big { font-size: 40px; font-weight: bold; color: #38bdf8; }
         @media (max-width: 400px) { .price-big { font-size: 32px; } }
         .price-sub { font-size: 13px; color: #64748b; margin-top: 6px; }
-
-        /* Table */
         .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th { color: #64748b; padding: 8px 6px; text-align: left; border-bottom: 1px solid #334155; white-space: nowrap; }
@@ -49,14 +33,10 @@
         .positive { color: #34d399; }
         .negative { color: #f87171; }
         .loading { color: #64748b; font-size: 14px; }
-
-        /* Info grid */
         .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .info-item { background: #0f172a; border-radius: 8px; padding: 10px; }
         .info-label { font-size: 11px; color: #64748b; }
         .info-value { font-size: 16px; font-weight: bold; margin-top: 4px; }
-
-        /* Industry */
         .industry-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
         @media (min-width: 600px) { .industry-grid { grid-template-columns: repeat(2, 1fr); } }
         @media (min-width: 1000px) { .industry-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -64,21 +44,11 @@
         .industry-card h3 { font-size: 13px; color: #38bdf8; margin-bottom: 10px; border-bottom: 1px solid #334155; padding-bottom: 8px; }
         .industry-card table { font-size: 12px; }
         .industry-card td { padding: 5px 4px; }
-
-        /* Filter */
         .filter-bar { margin-bottom: 16px; }
         .filter-bar input { width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #e2e8f0; font-size: 14px; }
-
-        /* Week label */
         .week-label { font-size: 12px; color: #64748b; margin-bottom: 12px; }
-
-        /* Description */
         .description-box { background: #0f172a; border-radius: 8px; padding: 14px; margin-top: 14px; font-size: 13px; line-height: 1.8; color: #94a3b8; }
-
-        /* Tags */
         .tag { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; background: #1e3a5f; color: #38bdf8; margin-right: 6px; margin-bottom: 8px; }
-
-        /* Chart */
         .chart-wrap { position: relative; width: 100%; overflow-x: auto; }
         canvas { max-width: 100%; }
     </style>
@@ -207,10 +177,9 @@ async function searchStock() {
     }
     document.getElementById("stockName").textContent = data.name || id;
     document.getElementById("stockPrice").textContent = `${data.price?.toFixed(1) || "--"} 元`;
-    document.getElementById("stockHighLow").textContent = `今日資料（延遲約 15 分鐘）`;
+    document.getElementById("stockHighLow").textContent = `今日最高：${data.high || "--"}　最低：${data.low || "--"}`;
     document.getElementById("stockTags").innerHTML = `
         ${data.industry ? `<span class="tag">🏭 ${data.industry}</span>` : ""}
-        ${data.market_cap ? `<span class="tag">💰 市值 ${(data.market_cap/1e8).toFixed(0)} 億</span>` : ""}
     `;
     document.getElementById("stockMetrics").innerHTML = `
         <div class="info-item"><div class="info-label">本益比 P/E</div><div class="info-value">${typeof data.pe_ratio === "number" ? data.pe_ratio.toFixed(1) : "N/A"}</div></div>
@@ -232,13 +201,13 @@ async function loadInstitutional() {
     }
     document.getElementById("buyTable").innerHTML = `
         <table><tr><th>股票名稱</th><th>買超（張）</th></tr>
-        ${data.buy.map(r => `<tr><td>${r["股票名稱"]}</td><td class="positive">+${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        ${data.buy.map(r => `<tr><td>${r["證券名稱"]}</td><td class="positive">+${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
         </table>`;
     document.getElementById("sellTable").innerHTML = `
         <table><tr><th>股票名稱</th><th>賣超（張）</th></tr>
-        ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
+        ${data.sell.map(r => `<tr><td>${r["證券名稱"]}</td><td class="negative">${(r["三大法人合計"]/1000).toFixed(0)}</td></tr>`).join("")}
         </table>`;
-    const labels = [...data.buy.map(r => r["股票名稱"].trim()), ...data.sell.map(r => r["股票名稱"].trim())];
+    const labels = [...data.buy.map(r => r["證券名稱"]), ...data.sell.map(r => r["證券名稱"])];
     const values = [...data.buy.map(r => r["三大法人合計"]/1000), ...data.sell.map(r => r["三大法人合計"]/1000)];
     const colors = values.map(v => v >= 0 ? "#34d399" : "#f87171");
     if (chartInstance) chartInstance.destroy();
@@ -275,7 +244,7 @@ async function loadWeekly() {
         <table><tr><th>股票名稱</th><th>週合計（張）</th></tr>
         ${data.sell.map(r => `<tr><td>${r["股票名稱"]}</td><td class="negative">${(r["週合計買賣超"]/1000).toFixed(0)}</td></tr>`).join("")}
         </table>`;
-    const labels = [...data.buy.map(r => r["股票名稱"].trim()), ...data.sell.map(r => r["股票名稱"].trim())];
+    const labels = [...data.buy.map(r => r["股票名稱"]), ...data.sell.map(r => r["股票名稱"])];
     const values = [...data.buy.map(r => r["週合計買賣超"]/1000), ...data.sell.map(r => r["週合計買賣超"]/1000)];
     const colors = values.map(v => v >= 0 ? "#34d399" : "#f87171");
     if (weeklyChartInstance) weeklyChartInstance.destroy();
