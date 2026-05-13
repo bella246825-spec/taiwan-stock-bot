@@ -18,7 +18,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests pandas
+        run: pip install requests pandas twstock
 
       - name: Fetch data
         run: python fetch_data.py
