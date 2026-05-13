@@ -61,6 +61,7 @@ def fetch_institutional():
     df_info = get_stock_id_list()
     stock_only = df_info["stock_id"].tolist()
     df = df[df["證券代號"].isin(stock_only)]
+    df["證券名稱"] = df["證券名稱"].str.strip()
     top10_buy = df.nlargest(10, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]].rename(columns={"三大法人買賣超股數": "三大法人合計"}).to_dict("records")
     top10_sell = df.nsmallest(10, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]].rename(columns={"三大法人買賣超股數": "三大法人合計"}).to_dict("records")
     save_json("data/institutional.json", {"buy": top10_buy, "sell": top10_sell, "date": date})
@@ -84,6 +85,7 @@ def fetch_industry():
     df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
     df_info = get_stock_id_list()
     df_merged = pd.merge(df, df_info, left_on="證券代號", right_on="stock_id", how="inner")
+    df_merged["證券名稱"] = df_merged["證券名稱"].str.strip()
     result = {}
     for industry, group in df_merged.groupby("industry_category"):
         top5 = group.nlargest(5, "三大法人買賣超股數")[["證券名稱", "三大法人買賣超股數"]]
@@ -110,6 +112,7 @@ def fetch_weekly():
         df = df[["證券代號", "證券名稱", "三大法人買賣超股數"]]
         df["三大法人買賣超股數"] = df["三大法人買賣超股數"].str.replace(",", "").astype(float)
         df = df[df["證券代號"].isin(stock_only)]
+        df["證券名稱"] = df["證券名稱"].str.strip()
         all_df.append(df)
         dates.append(date_str)
     if not all_df:
