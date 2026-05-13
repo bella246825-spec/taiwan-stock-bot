@@ -11,8 +11,6 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
-FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
-FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 GITHUB_RAW = "https://raw.githubusercontent.com/bella246825-spec/taiwan-stock-bot/main/data"
 
 _cache = {}
@@ -62,57 +60,82 @@ def get_weekly_institutional():
         cache_set("weekly", result)
     return result
 
+def get_all_stocks():
+    """從證交所 OpenAPI 抓所有股票清單"""
+    cached, found = cache_get("all_stocks")
+    if found:
+        return cached
+    try:
+        res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d", timeout=15)
+        data = res.json()
+        result = {d["Code"]: d for d in data}
+        cache_set("all_stocks", result)
+        return result
+    except:
+        return {}
+
 def get_stock_info(stock_id):
     cache_key = f"stock_{stock_id}"
     cached, found = cache_get(cache_key)
     if found:
         return cached
     try:
-        # 基本資料用 FinMind
-        params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
-        res = requests.get(FINMIND_URL, params=params, timeout=15)
-        data = res.json()
+        # 從證交所抓財務指標
+        all_stocks = get_all_stocks()
+        stock_per = all_stocks.get(stock_id)
 
-        if data["status"] != 200 or not data["data"]:
-            return {"error": "查無此股票代號"}
+        if not stock_per:
+            return {"error": f"查無股票代號 {stock_id}，請確認代號是否正確"}
 
-        df_info = pd.DataFrame(data["data"])
-        match = df_info[df_info["stock_id"] == stock_id]
-        if match.empty:
-            return {"error": f"查無股票代號 {stock_id}"}
-        stock_info = match.iloc[0].to_dict()
-
-        # 財務指標用證交所 OpenAPI
-        per_res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d", timeout=15)
-        per_data = per_res.json()
-        stock_per = next((d for d in per_data if d.get("Code") == stock_id), None)
-
-        pe_ratio = stock_per.get("PEratio", "N/A") if stock_per else "N/A"
-        pb_ratio = stock_per.get("PBratio", "N/A") if stock_per else "N/A"
-        dividend_yield = stock_per.get("DividendYield", "N/A") if stock_per else "N/A"
-        close_price = stock_per.get("ClosePrice", None) if stock_per else None
+        name = stock_per.get("Name", "")
+        pe_ratio = stock_per.get("PEratio", "N/A")
+        pb_ratio = stock_per.get("PBratio", "N/A")
+        dividend_yield = stock_per.get("DividendYield", "N/A")
+        fiscal_quarter = stock_per.get("FiscalYearQuarter", "N/A")
 
         # 歷史股價用 twstock
-        stock_obj = twstock.Stock(stock_id)
-        dates = [d.strftime("%Y-%m-%d") for d in stock_obj.date]
-        closes = stock_obj.close
-        highs = stock_obj.high
-        lows = stock_obj.low
+        try:
+            stock_obj = twstock.Stock(stock_id)
+            dates = [d.strftime("%Y-%m-%d") for d in stock_obj.date]
+            closes = stock_obj.close
+            highs = stock_obj.high
+            lows = stock_obj.low
+            price = closes[-1] if closes else None
+            high = highs[-1] if highs else None
+            low = lows[-1] if lows else None
+        except:
+            dates = []
+            closes = []
+            price = float(stock_per.get("ClosePrice", 0)) or None
+            high = None
+            low = None
 
-        price = closes[-1] if closes else None
-        high = highs[-1] if highs else None
-        low = lows[-1] if lows else None
+        # 產業分類用 FinMind
+        industry = "N/A"
+        try:
+            FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+            params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
+            res = requests.get("https://api.finmindtrade.com/api/v4/data", params=params, timeout=15)
+            data = res.json()
+            if data["status"] == 200:
+                df_info = pd.DataFrame(data["data"])
+                match = df_info[df_info["stock_id"] == stock_id]
+                if not match.empty:
+                    industry = match.iloc[0].get("industry_category", "N/A")
+        except:
+            pass
 
         result = {
-            "name": stock_info.get("stock_name", ""),
-            "industry": stock_info.get("industry_category", ""),
-            "description": f"{stock_info.get('stock_name', '')} 屬於台灣 {stock_info.get('industry_category', '')} 產業，股票代號為 {stock_id}。",
-            "price": float(close_price) if close_price else price,
+            "name": name,
+            "industry": industry,
+            "description": f"{name} 股票代號為 {stock_id}，屬於台灣 {industry} 產業。最新財報季度：{fiscal_quarter}。",
+            "price": price,
             "high": high,
             "low": low,
             "pe_ratio": pe_ratio,
             "pb_ratio": pb_ratio,
             "dividend_yield": dividend_yield,
+            "fiscal_quarter": fiscal_quarter,
             "history_dates": dates,
             "history_closes": closes,
         }
