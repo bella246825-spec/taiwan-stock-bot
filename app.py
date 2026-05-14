@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import urllib3
 import os
 import time
-import twstock
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -61,18 +60,38 @@ def get_weekly_institutional():
     return result
 
 def get_all_stocks():
-    """從證交所 OpenAPI 抓所有股票清單"""
     cached, found = cache_get("all_stocks")
     if found:
         return cached
-    try:
-        res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d", timeout=15)
-        data = res.json()
-        result = {d["Code"]: d for d in data}
+    result = fetch_github_json("stocks.json")
+    if not result.get("error"):
         cache_set("all_stocks", result)
-        return result
+    return result
+
+def get_all_history():
+    cached, found = cache_get("all_history")
+    if found:
+        return cached
+    result = fetch_github_json("history.json")
+    if not result.get("error"):
+        cache_set("all_history", result)
+    return result
+
+def get_finmind_industry(stock_id):
+    """用 FinMind 抓產業分類"""
+    try:
+        FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+        params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
+        res = requests.get("https://api.finmindtrade.com/api/v4/data", params=params, timeout=15)
+        data = res.json()
+        if data["status"] == 200:
+            df_info = pd.DataFrame(data["data"])
+            match = df_info[df_info["stock_id"] == stock_id]
+            if not match.empty:
+                return match.iloc[0].get("industry_category", "N/A")
     except:
-        return {}
+        pass
+    return "N/A"
 
 def get_stock_info(stock_id):
     cache_key = f"stock_{stock_id}"
@@ -80,50 +99,37 @@ def get_stock_info(stock_id):
     if found:
         return cached
     try:
-        # 從證交所抓財務指標
+        # 從 GitHub 讀財務指標
         all_stocks = get_all_stocks()
-        stock_per = all_stocks.get(stock_id)
+        if isinstance(all_stocks, dict) and "error" not in all_stocks:
+            stock_per = all_stocks.get(stock_id)
+        else:
+            stock_per = None
 
         if not stock_per:
             return {"error": f"查無股票代號 {stock_id}，請確認代號是否正確"}
 
-        name = stock_per.get("Name", "")
-        pe_ratio = stock_per.get("PEratio", "N/A")
-        pb_ratio = stock_per.get("PBratio", "N/A")
-        dividend_yield = stock_per.get("DividendYield", "N/A")
-        fiscal_quarter = stock_per.get("FiscalYearQuarter", "N/A")
+        name = stock_per.get("name", "")
+        pe_ratio = stock_per.get("pe_ratio", "N/A")
+        pb_ratio = stock_per.get("pb_ratio", "N/A")
+        dividend_yield = stock_per.get("dividend_yield", "N/A")
+        fiscal_quarter = stock_per.get("fiscal_quarter", "N/A")
+        close = stock_per.get("close", None)
 
-        # 歷史股價用 twstock
-        try:
-            stock_obj = twstock.Stock(stock_id)
-            dates = [d.strftime("%Y-%m-%d") for d in stock_obj.date]
-            closes = stock_obj.close
-            highs = stock_obj.high
-            lows = stock_obj.low
-            price = closes[-1] if closes else None
-            high = highs[-1] if highs else None
-            low = lows[-1] if lows else None
-        except:
-            dates = []
-            closes = []
-            price = float(stock_per.get("ClosePrice", 0)) or None
-            high = None
-            low = None
+        # 從 GitHub 讀歷史股價
+        all_history = get_all_history()
+        history = all_history.get(stock_id, {}) if isinstance(all_history, dict) else {}
+        dates = history.get("dates", [])
+        closes = history.get("closes", [])
+        highs = history.get("highs", [])
+        lows = history.get("lows", [])
 
-        # 產業分類用 FinMind
-        industry = "N/A"
-        try:
-            FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
-            params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
-            res = requests.get("https://api.finmindtrade.com/api/v4/data", params=params, timeout=15)
-            data = res.json()
-            if data["status"] == 200:
-                df_info = pd.DataFrame(data["data"])
-                match = df_info[df_info["stock_id"] == stock_id]
-                if not match.empty:
-                    industry = match.iloc[0].get("industry_category", "N/A")
-        except:
-            pass
+        price = closes[-1] if closes else (float(close) if close and close != "N/A" else None)
+        high = highs[-1] if highs else None
+        low = lows[-1] if lows else None
+
+        # 產業分類
+        industry = get_finmind_industry(stock_id)
 
         result = {
             "name": name,
