@@ -127,7 +127,6 @@ def fetch_weekly():
     save_json("data/weekly.json", {"buy": top10_buy, "sell": top10_sell, "dates": dates})
 
 def fetch_stock_data():
-    """抓取所有股票的財務指標"""
     print("抓取股票財務指標...")
     try:
         res = requests.get("https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_d", timeout=15)
@@ -150,34 +149,32 @@ def fetch_stock_data():
         print(f"股票財務指標抓取失敗：{e}")
 
 def fetch_stock_history():
-    """抓取常用股票的歷史股價"""
     print("抓取歷史股價...")
-    # 抓台股前50大市值股票
-    common_stocks = [
-        "2330", "2317", "2454", "2382", "2308",
-        "2303", "2881", "2882", "2891", "2886",
-        "2884", "2885", "2892", "2883", "2880",
-        "1301", "1303", "1326", "2002", "2412",
-        "3008", "2886", "2887", "2888", "2889",
-        "2890", "2912", "1216", "2207", "2357",
-        "2379", "2395", "2408", "2409", "2448",
-        "2474", "2492", "2498", "2603", "2609",
-        "2615", "2618", "2801", "2823", "3045",
-        "3711", "4904", "4938", "5876", "6505"
-    ]
+    try:
+        with open("data/stocks.json", "r", encoding="utf-8") as f:
+            stocks_data = json.load(f)
+        all_ids = list(stocks_data.keys())
+    except:
+        all_ids = []
+
+    print(f"共 {len(all_ids)} 支股票")
+
     history = {}
-    for sid in common_stocks:
+    for i, sid in enumerate(all_ids):
         try:
             stock = twstock.Stock(sid)
-            history[sid] = {
-                "dates": [d.strftime("%Y-%m-%d") for d in stock.date],
-                "closes": stock.close,
-                "highs": stock.high,
-                "lows": stock.low,
-            }
-            print(f"✅ {sid} 完成")
-        except Exception as e:
-            print(f"❌ {sid} 失敗：{e}")
+            if stock.close:
+                history[sid] = {
+                    "dates": [d.strftime("%Y-%m-%d") for d in stock.date],
+                    "closes": stock.close,
+                    "highs": stock.high,
+                    "lows": stock.low,
+                }
+            if (i + 1) % 50 == 0:
+                print(f"進度：{i + 1}/{len(all_ids)}")
+        except:
+            pass
+
     save_json("data/history.json", history)
     print(f"共儲存 {len(history)} 支股票歷史資料")
 
