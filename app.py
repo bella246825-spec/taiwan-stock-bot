@@ -5,12 +5,14 @@ from datetime import datetime, timedelta
 import urllib3
 import os
 import time
+import twstock
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = Flask(__name__)
 
 GITHUB_RAW = "https://raw.githubusercontent.com/bella246825-spec/taiwan-stock-bot/main/data"
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 
 _cache = {}
 CACHE_TTL = 300
@@ -78,9 +80,7 @@ def get_all_history():
     return result
 
 def get_finmind_industry(stock_id):
-    """用 FinMind 抓產業分類"""
     try:
-        FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
         params = {"dataset": "TaiwanStockInfo", "token": FINMIND_TOKEN}
         res = requests.get("https://api.finmindtrade.com/api/v4/data", params=params, timeout=15)
         data = res.json()
@@ -93,18 +93,27 @@ def get_finmind_industry(stock_id):
         pass
     return "N/A"
 
+def get_stock_history_realtime(stock_id):
+    """即時用 twstock 抓歷史股價"""
+    try:
+        stock_obj = twstock.Stock(stock_id)
+        dates = [d.strftime("%Y-%m-%d") for d in stock_obj.date]
+        closes = stock_obj.close
+        highs = stock_obj.high
+        lows = stock_obj.low
+        return dates, closes, highs, lows
+    except:
+        return [], [], [], []
+
 def get_stock_info(stock_id):
     cache_key = f"stock_{stock_id}"
     cached, found = cache_get(cache_key)
     if found:
         return cached
     try:
-        # 從 GitHub 讀財務指標
+        # 財務指標從 GitHub 讀
         all_stocks = get_all_stocks()
-        if isinstance(all_stocks, dict) and "error" not in all_stocks:
-            stock_per = all_stocks.get(stock_id)
-        else:
-            stock_per = None
+        stock_per = all_stocks.get(stock_id) if isinstance(all_stocks, dict) and "error" not in all_stocks else None
 
         if not stock_per:
             return {"error": f"查無股票代號 {stock_id}，請確認代號是否正確"}
@@ -116,13 +125,17 @@ def get_stock_info(stock_id):
         fiscal_quarter = stock_per.get("fiscal_quarter", "N/A")
         close = stock_per.get("close", None)
 
-        # 從 GitHub 讀歷史股價
+        # 歷史股價：先查 GitHub，沒有就即時抓
         all_history = get_all_history()
         history = all_history.get(stock_id, {}) if isinstance(all_history, dict) else {}
         dates = history.get("dates", [])
         closes = history.get("closes", [])
         highs = history.get("highs", [])
         lows = history.get("lows", [])
+
+        # 如果沒有預存資料，即時用 twstock 抓
+        if not dates:
+            dates, closes, highs, lows = get_stock_history_realtime(stock_id)
 
         price = closes[-1] if closes else (float(close) if close and close != "N/A" else None)
         high = highs[-1] if highs else None
